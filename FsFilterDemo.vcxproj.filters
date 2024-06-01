@@ -36,6 +36,9 @@
     <ClCompile Include="rc4.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="global_arg.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="FsFilterDemo.rc">

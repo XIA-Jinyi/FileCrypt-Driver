@@ -7,7 +7,10 @@
 #define MY_TAG (2021212057UL)
 
 extern PFLT_FILTER gFilterHandle;
-extern PWCHAR pPathPrefix;
-extern PCHAR rc4_key;
+extern PWCHAR gPath;
+extern PCHAR gRc4Key;
+extern PWCHAR gIgnoredDirs[];
+extern PWCHAR gIgnoredRead[];
+extern PWCHAR gIgnoredWrite[];
 
 #endif

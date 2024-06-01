@@ -1,83 +1,110 @@
 #include "operation.h"
 #include <fltKernel.h>
 #include <ntddk.h>
+#include <dontuse.h>
+#include <suppress.h>
 #include "global.h"
-#include"rc4.h"
+#include "rc4.h"
 
-#define ULONG_MAX 4294967295U
+#define ULONG_MAX (4294967295U)
 
-PREOP_CALLBACK(PreCreate) {
-    UNREFERENCED_PARAMETER(FltObjects);
-    PFLT_FILE_NAME_INFORMATION fileNameInfo = NULL;
-    NTSTATUS status;
+#define PATH_LEN (8192)
+WCHAR infoFilePath[PATH_LEN];
 
-    status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &fileNameInfo);
-    if (!NT_SUCCESS(status)) {
-        goto EXIT;
-    }
-    status = FltParseFileNameInformation(fileNameInfo);
-    if (!NT_SUCCESS(status)) {
-        goto EXIT;
-    }
-    if (wcsstr(fileNameInfo->Name.Buffer, pPathPrefix)) {
-        KdPrint(("Minifilter: CREATE %ws\n", fileNameInfo->Name.Buffer));
-    }
+//PREOP_CALLBACK(PreCreate) {
+//    UNREFERENCED_PARAMETER(FltObjects);
+//    PFLT_FILE_NAME_INFORMATION fileNameInfo = NULL;
+//    NTSTATUS status;
+//
+//    status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &fileNameInfo);
+//    if (!NT_SUCCESS(status)) {
+//        goto EXIT;
+//    }
+//    status = FltParseFileNameInformation(fileNameInfo);
+//    if (!NT_SUCCESS(status)) {
+//        goto EXIT;
+//    }
+//    if (wcsstr(fileNameInfo->Name.Buffer, gPath)) {
+//        KdPrint(("Minifilter: CREATE %ws\n", fileNameInfo->Name.Buffer));
+//    }
+//
+//EXIT:
+//    CompletionContext = NULL;
+//    if (fileNameInfo)
+//        FltReleaseFileNameInformation(fileNameInfo);
+//    return FLT_PREOP_SUCCESS_NO_CALLBACK;
+//}
 
-EXIT:
-    CompletionContext = NULL;
-    if (fileNameInfo)
-        FltReleaseFileNameInformation(fileNameInfo);
-    return FLT_PREOP_SUCCESS_NO_CALLBACK;
-}
-
-PREOP_CALLBACK(PreClose) {
-    UNREFERENCED_PARAMETER(FltObjects);
-    KdPrint(("Minifilter: PreClose activated"));
-    PFLT_FILE_NAME_INFORMATION fileNameInfo = NULL;
-    NTSTATUS status;
-
-    status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &fileNameInfo);
-    if (!NT_SUCCESS(status)) {
-        goto EXIT;
-    }
-    status = FltParseFileNameInformation(fileNameInfo);
-    if (!NT_SUCCESS(status)) {
-        goto EXIT;
-    }
-    if (wcsstr(fileNameInfo->Name.Buffer, pPathPrefix)) {
-        KdPrint(("Minifilter: CLOSE %ws\n", fileNameInfo->Name.Buffer));
-    }
-
-EXIT:
-    CompletionContext = NULL;
-    if (fileNameInfo)
-        FltReleaseFileNameInformation(fileNameInfo);
-    return FLT_PREOP_SUCCESS_NO_CALLBACK;
-}
+//PREOP_CALLBACK(PreClose) {
+//    UNREFERENCED_PARAMETER(FltObjects);
+//    KdPrint(("Minifilter: PreClose activated"));
+//    PFLT_FILE_NAME_INFORMATION fileNameInfo = NULL;
+//    NTSTATUS status;
+//
+//    status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &fileNameInfo);
+//    if (!NT_SUCCESS(status)) {
+//        goto EXIT;
+//    }
+//    status = FltParseFileNameInformation(fileNameInfo);
+//    if (!NT_SUCCESS(status)) {
+//        goto EXIT;
+//    }
+//    if (wcsstr(fileNameInfo->Name.Buffer, gPath)) {
+//        KdPrint(("Minifilter: CLOSE %ws\n", fileNameInfo->Name.Buffer));
+//    }
+//
+//EXIT:
+//    CompletionContext = NULL;
+//    if (fileNameInfo)
+//        FltReleaseFileNameInformation(fileNameInfo);
+//    return FLT_PREOP_SUCCESS_NO_CALLBACK;
+//}
 
 PREOP_CALLBACK(PreRead) {
     UNREFERENCED_PARAMETER(FltObjects);
     PFLT_FILE_NAME_INFORMATION fileNameInfo = NULL;
     NTSTATUS status;
     FLT_PREOP_CALLBACK_STATUS retval = FLT_PREOP_SUCCESS_NO_CALLBACK;
+    PEPROCESS process = PsGetCurrentProcess();
+    PUNICODE_STRING processImageName = NULL;
 
+    status = SeLocateProcessImageName(process, &processImageName);
+    if (!NT_SUCCESS(status) || !processImageName || !processImageName->Buffer) {
+        goto EXIT;
+    }
     status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &fileNameInfo);
-    if (!NT_SUCCESS(status)) {
+    if (!NT_SUCCESS(status) || !fileNameInfo) {
         goto EXIT;
     }
     status = FltParseFileNameInformation(fileNameInfo);
-    if (!NT_SUCCESS(status)) {
+    if (!NT_SUCCESS(status) || !fileNameInfo->Name.Buffer) {
         goto EXIT;
     }
-    if (wcsstr(fileNameInfo->Name.Buffer, pPathPrefix)) {
+    if (wcscmp(processImageName->Buffer, gPath) == 0) {
+        for (int i = 0; gIgnoredDirs[i]; i++) {
+            if (wcsstr(fileNameInfo->Name.Buffer, gIgnoredDirs[i]) == fileNameInfo->Name.Buffer) {
+                goto EXIT;
+            }
+        }
+        for (int i = 0; gIgnoredRead[i]; i++) {
+            if (wcsstr(fileNameInfo->Name.Buffer, gIgnoredRead[i])) {
+                goto EXIT;
+            }
+        }
+        //KdPrint(("Minifilter: Process %ws invokes READ.", processImageName->Buffer));
         ULONG length = Data->Iopb->Parameters.Read.Length;
         LONGLONG offset = Data->Iopb->Parameters.Read.ByteOffset.QuadPart;
-        KdPrint(("Minifilter: READ %lu BYTES FROM %ws AT %lld\n", length, fileNameInfo->Name.Buffer, offset));
+        KdPrint(("Minifilter: READ %lu BYTES FROM %ws AT %lld by %wZ\n", length, fileNameInfo->Name.Buffer, offset, processImageName));
         retval = FLT_PREOP_SUCCESS_WITH_CALLBACK;
     }
+    //else {
+    //    KdPrint(("Minifilter: PROCESS %ws IGNORED\n", processImageName->Buffer));
+    //}
 
 EXIT:
     CompletionContext = NULL;
+    if (processImageName)
+        ExFreePool(processImageName);
     if (fileNameInfo)
         FltReleaseFileNameInformation(fileNameInfo);
     return retval;
@@ -90,13 +117,9 @@ POSTOP_CALLBACK(PostRead) {
     ULONG length = Data->Iopb->Parameters.Read.Length;
     LONGLONG offset = Data->Iopb->Parameters.Read.ByteOffset.QuadPart;
     PUCHAR buffer = (PUCHAR)Data->Iopb->Parameters.Read.ReadBuffer;
-    
-    /*for (ULONG i = 0; i < length; i++) {
-        buffer[i] ^= 0x3f;
-    }*/
 
-    SIZE_T key_len = strlen(rc4_key);
-    RC4_CONTEXT TBox = Rc4GetContext((CONST PVOID)rc4_key, key_len);
+    SIZE_T key_len = strlen(gRc4Key);
+    RC4_CONTEXT TBox = Rc4GetContext((CONST PVOID)gRc4Key, key_len);
     RC4Crypt(TBox, buffer, length, offset);
 
     return FLT_POSTOP_FINISHED_PROCESSING;
@@ -107,39 +130,53 @@ PREOP_CALLBACK(PreWrite) {
     PFLT_FILE_NAME_INFORMATION fileNameInfo = NULL;
     NTSTATUS status;
     FLT_PREOP_CALLBACK_STATUS retval = FLT_PREOP_SUCCESS_NO_CALLBACK;
+    PEPROCESS process = PsGetCurrentProcess();
+    PUNICODE_STRING processImageName = NULL;
 
+    status = SeLocateProcessImageName(process, &processImageName);
+    if (!NT_SUCCESS(status) || !processImageName || !processImageName->Buffer) {
+        goto EXIT;
+    }
     status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &fileNameInfo);
-    if (!NT_SUCCESS(status)) {
+    if (!NT_SUCCESS(status) || !fileNameInfo) {
         goto EXIT;
     }
     status = FltParseFileNameInformation(fileNameInfo);
-    if (!NT_SUCCESS(status)) {
+    if (!NT_SUCCESS(status) || !fileNameInfo->Name.Buffer) {
         goto EXIT;
     }
-    if (wcsstr(fileNameInfo->Name.Buffer, pPathPrefix)) {
+    if (wcscmp(processImageName->Buffer, gPath) == 0) {
+        for (int i = 0; gIgnoredDirs[i]; i++) {
+            if (wcsstr(fileNameInfo->Name.Buffer, gIgnoredDirs[i]) == fileNameInfo->Name.Buffer) {
+                goto EXIT;
+            }
+        }
+        for (int i = 0; gIgnoredWrite[i]; i++) {
+            if (wcsstr(fileNameInfo->Name.Buffer, gIgnoredWrite[i])) {
+                goto EXIT;
+            }
+        }
+        //KdPrint(("Minifilter: Process %ws invokes WRITE.", processImageName->Buffer));
         ULONG length = Data->Iopb->Parameters.Write.Length;
         LONGLONG offset = Data->Iopb->Parameters.Write.ByteOffset.QuadPart;
-        KdPrint(("Minifilter: WRITE %lu BYTES TO %ws AT %lld\n", length, fileNameInfo->Name.Buffer, offset));
+        KdPrint(("Minifilter: WRITE %lu BYTES TO %ws AT %lld by %ws\n", length, fileNameInfo->Name.Buffer, offset, processImageName->Buffer));
         PUCHAR buffer = (PUCHAR)Data->Iopb->Parameters.Write.WriteBuffer;
-        
-        /*for (ULONG i = 0; i < length; i++) {
-            buffer[i] ^= 0x3f;
-        }*/
 
-        SIZE_T key_len = strlen(rc4_key);
-        RC4_CONTEXT TBox = Rc4GetContext((CONST PVOID)rc4_key, key_len);
+        SIZE_T key_len = strlen(gRc4Key);
+        RC4_CONTEXT TBox = Rc4GetContext((CONST PVOID)gRc4Key, key_len);
         RC4Crypt(TBox, buffer, length, offset);
+
+        retval = FLT_PREOP_SUCCESS_WITH_CALLBACK;
     }
-    retval = FLT_PREOP_SUCCESS_WITH_CALLBACK;
 
 EXIT:
     CompletionContext = NULL;
+    if (processImageName)
+        ExFreePool(processImageName);
     if (fileNameInfo)
         FltReleaseFileNameInformation(fileNameInfo);
     return retval;
 }
-
-
 
 void CopyFile(PCWSTR sourcePath, PCWSTR destinationPath)
 {
@@ -153,12 +190,13 @@ void CopyFile(PCWSTR sourcePath, PCWSTR destinationPath)
     //ULONG bytesRead;
     UNICODE_STRING usrcpath;
     UNICODE_STRING udstpath;
+   
 
     // 初始化并打开源文件
     RtlInitUnicodeString(&usrcpath, sourcePath);
     InitializeObjectAttributes(&objectAttributes, &usrcpath, OBJ_KERNEL_HANDLE, NULL, NULL);
     //status = ZwCreateFile(&sourceHandle, GENERIC_READ, &objectAttributes, &ioStatusBlock, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_VALID_FLAGS, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
-    
+
     IO_SECURITY_CONTEXT securityContext;
     securityContext.SecurityQos = NULL;
     securityContext.AccessState = NULL;
@@ -185,7 +223,7 @@ void CopyFile(PCWSTR sourcePath, PCWSTR destinationPath)
 
 
     if (!NT_SUCCESS(status)) {
-        KdPrint(("Minifilter: Failed to open source file %ws",sourcePath));
+        KdPrint(("Minifilter: Failed to open source file %ws", sourcePath));
         KdPrint(("Minifilter: status %x", status));
         goto EXIT;
     }
@@ -195,11 +233,11 @@ void CopyFile(PCWSTR sourcePath, PCWSTR destinationPath)
     InitializeObjectAttributes(&objectAttributes, &udstpath, OBJ_KERNEL_HANDLE, NULL, NULL);
     status = ZwCreateFile(&destinationHandle, GENERIC_WRITE, &objectAttributes, &ioStatusBlock, NULL, FILE_ATTRIBUTE_NORMAL, 0, FILE_SUPERSEDE, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
     if (!NT_SUCCESS(status)) {
-        KdPrint(("Minifilter: Failed to create target file %ws", destinationPath));
+        KdPrint(("Minifilter: Failed to create target file %ws, status:0x%08X ", destinationPath, status));
         goto EXIT;
     }
 
-    // 读取源文件并写入到目标文件
+    //// 读取源文件并写入到目标文件
     while (NT_SUCCESS(ZwReadFile(sourceHandle, NULL, NULL, NULL, &ioStatusBlock, buffer, sizeof(buffer), NULL, NULL))) {
         if (ioStatusBlock.Information == 0)
             break; // 文件末尾
@@ -218,9 +256,8 @@ void CopyFile(PCWSTR sourcePath, PCWSTR destinationPath)
     }
 
     // 构建信息文件路径
-    WCHAR infoFilePath[512];
     UNICODE_STRING infoFileName;
-    
+
     swprintf(infoFilePath, L"%ws.info", destinationPath);
     RtlInitUnicodeString(&infoFileName, infoFilePath);
     InitializeObjectAttributes(&objectAttributes, &infoFileName, OBJ_KERNEL_HANDLE, NULL, NULL);
@@ -287,24 +324,23 @@ void AppendTimestampedFilename(PWCHAR basePath) {
 POSTOP_CALLBACK(PostWrite) {
     UNREFERENCED_PARAMETER(FltObjects);
     UNREFERENCED_PARAMETER(Flags);
+    UNREFERENCED_PARAMETER(CompletionContext);
     PFLT_FILE_NAME_INFORMATION fileNameInfo = NULL;
     NTSTATUS status;
     status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &fileNameInfo);
     if (!NT_SUCCESS(status)) {
         goto EXIT;
     }
-    if (wcsstr(fileNameInfo->Name.Buffer, pPathPrefix)) {
-        KdPrint(("Minifilter: Copy %ws\n", fileNameInfo->Name.Buffer));
-        //PWCHAR target_path = L"\\Device\\HarddiskVolume3\\FsFilterDemotemp\\";
-        WCHAR target_path[512];
-        PWCHAR basePath = L"\\Device\\HarddiskVolume3\\FsFilterDemotemp\\";
-        RtlStringCbCopyW(target_path, 512 * sizeof(WCHAR), basePath);
-        AppendTimestampedFilename(target_path);
-        KdPrint(("Minifilter: Targetpath %ws\n", target_path));
-        CopyFile(fileNameInfo->Name.Buffer,target_path);
-    }
+    KdPrint(("Minifilter: Copy %ws\n", fileNameInfo->Name.Buffer));
+    //PWCHAR target_path = L"\\Device\\HarddiskVolume3\\FsFilterDemotemp\\";
+    WCHAR target_path[512];
+    PWCHAR basePath = L"\\Device\\HarddiskVolume3\\FsFilterDemotemp\\";
+    RtlStringCbCopyW(target_path, 512 * sizeof(WCHAR), basePath);
+    AppendTimestampedFilename(target_path);
+    KdPrint(("Minifilter: Targetpath %ws\n", target_path));
+    CopyFile(fileNameInfo->Name.Buffer, target_path);
+
 EXIT:
-    CompletionContext = NULL;
     if (fileNameInfo)
         FltReleaseFileNameInformation(fileNameInfo);
     return FLT_POSTOP_FINISHED_PROCESSING;

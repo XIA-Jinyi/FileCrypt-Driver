@@ -4,7 +4,7 @@
 #include "global.h"
 #include "rc4.h"
 
-#define MAX_PATH_LENGTH (32767 + 1)
+#define MAX_PATH_LENGTH (8192)
 
 CONST FLT_OPERATION_REGISTRATION callbacks[] = {
     //{
